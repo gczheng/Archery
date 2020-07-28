@@ -57,10 +57,10 @@ def optimize_sqladvisor(request):
     args = {"h": instance_info.host,
             "P": instance_info.port,
             "u": instance_info.user,
-            "p": instance_info.raw_password,
+            "p": instance_info.password,
             "d": db_name,
             "v": verbose,
-            "q": sql_content.strip().replace('"', '\\"').replace('`', '').replace('\n', ' ')
+            "q": sql_content.strip()
             }
 
     # 参数检查
@@ -108,7 +108,7 @@ def optimize_soar(request):
 
     # 目标实例的连接信息
     online_dsn = "{user}:{pwd}@{host}:{port}/{db}".format(user=instance_info.user,
-                                                          pwd=instance_info.raw_password,
+                                                          pwd=instance_info.password,
                                                           host=instance_info.host,
                                                           port=instance_info.port,
                                                           db=db_name)
@@ -120,7 +120,7 @@ def optimize_soar(request):
             "test-dsn": soar_test_dsn,
             "allow-online-as-test": "false",
             "report-type": "markdown",
-            "query": sql.strip().replace('"', '\\"').replace('`', '').replace('\n', ' ')
+            "query": sql.strip()
             }
     # 参数检查
     args_check_result = soar.check_args(args)
@@ -144,7 +144,11 @@ def optimize_sqltuning(request):
     db_name = request.POST.get('db_name')
     sqltext = request.POST.get('sql_content')
     option = request.POST.getlist('option[]')
-
+    sqltext = sqlparse.format(sqltext, strip_comments=True)
+    sqltext = sqlparse.split(sqltext)[0]
+    if re.match(r"^select|^show|^explain", sqltext, re.I) is None:
+        result = {'status': 1, 'msg': '只支持查询SQL！', 'data': []}
+        return HttpResponse(json.dumps(result),content_type='application/json')
     try:
         user_instances(request.user).get(instance_name=instance_name)
     except Instance.DoesNotExist:
@@ -217,6 +221,56 @@ def explain(request):
     # 执行获取执行计划语句
     query_engine = get_engine(instance=instance)
     sql_result = query_engine.query(str(db_name), sql_content).to_sep_dict()
+    result['data'] = sql_result
+
+    # 返回查询结果
+    return HttpResponse(json.dumps(result, cls=ExtendJSONEncoder, bigint_as_string=True),
+                        content_type='application/json')
+
+
+def optimize_sqltuningadvisor(request):
+    """
+    sqltuningadvisor工具获取优化报告
+    :param request:
+    :return:
+    """
+    sql_content = request.POST.get('sql_content')
+    instance_name = request.POST.get('instance_name')
+    db_name = request.POST.get('schema_name')
+    result = {'status': 0, 'msg': 'ok', 'data': []}
+
+    # 服务器端参数验证
+    if sql_content is None or instance_name is None:
+        result['status'] = 1
+        result['msg'] = '页面提交参数可能为空'
+        return HttpResponse(json.dumps(result), content_type='application/json')
+
+    try:
+        instance = user_instances(request.user).get(instance_name=instance_name)
+    except Instance.DoesNotExist:
+        result = {'status': 1, 'msg': '实例不存在', 'data': []}
+        return HttpResponse(json.dumps(result), content_type='application/json')
+
+    # 不删除注释语句，已获取加hints的SQL优化建议，进行语法判断，执行第一条有效sql
+    sql_content = sqlparse.format(sql_content.strip(), strip_comments=False)
+    # 对单引号加转义符,支持plsql语法
+    sql_content = sql_content.replace("'", "''");
+    try:
+        sql_content = sqlparse.split(sql_content)[0]
+    except IndexError:
+        result['status'] = 1
+        result['msg'] = '没有有效的SQL语句'
+        return HttpResponse(json.dumps(result), content_type='application/json')
+    else:
+        # 过滤非Oracle语句
+        if not instance.db_type == 'oracle':
+            result['status'] = 1
+            result['msg'] = 'SQLTuningAdvisor仅支持oracle数据库的检查'
+            return HttpResponse(json.dumps(result), content_type='application/json')
+
+    # 执行获取优化报告
+    query_engine = get_engine(instance=instance)
+    sql_result = query_engine.sqltuningadvisor(str(db_name), sql_content).to_sep_dict()
     result['data'] = sql_result
 
     # 返回查询结果

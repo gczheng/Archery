@@ -6,6 +6,7 @@ import simplejson as json
 from django.conf import settings
 from django.contrib.auth.decorators import permission_required
 from django.http import HttpResponse
+from django.views.decorators.cache import cache_page
 
 from common.config import SysConfig
 from common.utils.extend_json_encoder import ExtendJSONEncoder
@@ -41,9 +42,7 @@ def lists(request):
     # 过滤标签，返回同时包含全部标签的实例，TODO 循环会生成多表JOIN，如果数据量大会存在效率问题
     if tags:
         for tag in tags:
-            instances = instances.filter(instancetagrelations__instance_tag=tag,
-                                         instancetag__active=True,
-                                         instancetagrelations__active=True)
+            instances = instances.filter(instance_tag=tag, instance_tag__active=True)
 
     count = instances.count()
     instances = instances[offset:limit].values("id", "instance_name", "db_type", "type", "host", "port", "user")
@@ -186,30 +185,24 @@ def schemasync(request):
     instance_info = Instance.objects.get(instance_name=instance_name)
     target_instance_info = Instance.objects.get(instance_name=target_instance_name)
 
-    # 检查SchemaSync程序路径
-    path = SysConfig().get('schemasync')
-    if path is None:
-        result['status'] = 1
-        result['msg'] = '请配置SchemaSync路径！'
-        return HttpResponse(json.dumps(result), content_type='application/json')
-
     # 提交给SchemaSync获取对比结果
     schema_sync = SchemaSync()
     # 准备参数
     tag = int(time.time())
     output_directory = os.path.join(settings.BASE_DIR, 'downloads/schemasync/')
+    os.makedirs(output_directory, exist_ok=True)
     args = {
         "sync-auto-inc": sync_auto_inc,
         "sync-comments": sync_comments,
         "tag": tag,
         "output-directory": output_directory,
         "source": r"mysql://{user}:'{pwd}'@{host}:{port}/{database}".format(user=instance_info.user,
-                                                                            pwd=instance_info.raw_password,
+                                                                            pwd=instance_info.password,
                                                                             host=instance_info.host,
                                                                             port=instance_info.port,
                                                                             database=db_name),
         "target": r"mysql://{user}:'{pwd}'@{host}:{port}/{database}".format(user=target_instance_info.user,
-                                                                            pwd=target_instance_info.raw_password,
+                                                                            pwd=target_instance_info.password,
                                                                             host=target_instance_info.host,
                                                                             port=target_instance_info.port,
                                                                             database=target_db_name)
@@ -249,19 +242,20 @@ def schemasync(request):
     return HttpResponse(json.dumps(result), content_type='application/json')
 
 
+@cache_page(60 * 5, key_prefix="insRes")
 def instance_resource(request):
     """
     获取实例内的资源信息，database、schema、table、column
     :param request:
     :return:
     """
-    instance_id = request.POST.get('instance_id')
-    instance_name = request.POST.get('instance_name')
-    db_name = request.POST.get('db_name')
-    schema_name = request.POST.get('schema_name')
-    tb_name = request.POST.get('tb_name')
+    instance_id = request.GET.get('instance_id')
+    instance_name = request.GET.get('instance_name')
+    db_name = request.GET.get('db_name')
+    schema_name = request.GET.get('schema_name')
+    tb_name = request.GET.get('tb_name')
 
-    resource_type = request.POST.get('resource_type')
+    resource_type = request.GET.get('resource_type')
     if instance_id:
         instance = Instance.objects.get(id=instance_id)
     else:
@@ -279,15 +273,9 @@ def instance_resource(request):
         elif resource_type == 'schema' and db_name:
             resource = query_engine.get_all_schemas(db_name=db_name)
         elif resource_type == 'table' and db_name:
-            if schema_name:
-                resource = query_engine.get_all_tables(db_name=db_name, schema_name=schema_name)
-            else:
-                resource = query_engine.get_all_tables(db_name=db_name)
+            resource = query_engine.get_all_tables(db_name=db_name, schema_name=schema_name)
         elif resource_type == 'column' and db_name and tb_name:
-            if schema_name:
-                resource = query_engine.get_all_columns_by_tb(db_name=db_name, schema_name=schema_name, tb_name=tb_name)
-            else:
-                resource = query_engine.get_all_columns_by_tb(db_name=db_name, tb_name=tb_name)
+            resource = query_engine.get_all_columns_by_tb(db_name=db_name, tb_name=tb_name, schema_name=schema_name)
         else:
             raise TypeError('不支持的资源类型或者参数不完整！')
     except Exception as msg:
@@ -317,10 +305,7 @@ def describe(request):
 
     try:
         query_engine = get_engine(instance=instance)
-        if schema_name:
-            query_result = query_engine.describe_table(db_name, tb_name, schema_name)
-        else:
-            query_result = query_engine.describe_table(db_name, tb_name)
+        query_result = query_engine.describe_table(db_name, tb_name, schema_name=schema_name)
         result['data'] = query_result.__dict__
     except Exception as msg:
         result['status'] = 1
