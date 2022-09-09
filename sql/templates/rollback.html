@@ -92,10 +92,11 @@
                 title: '回滚语句',
                 field: 1,
                 formatter: function (value, row, index) {
-                    if (value.length > 80) {
-                        return value.substr(0, 80) + '...';
+                    var sql=row[1];
+                    if (sql.length > 80) {
+                        return sql.substr(0, 80) + '...';
                     } else {
-                        return value
+                        return sql
                     }
                 }
             }, {
@@ -115,9 +116,7 @@
                     sessionStorage.setItem('editSqlContent', backup_sql);
                 }
             },
-            onLoadError: function () {
-                alert("数据加载失败！请检查接口返回信息和错误日志！");
-            }
+            onLoadError: onLoadErrorCallback,
         });
         $(document).ready(function () {
             var isRollback = window.location.pathname.indexOf("rollback");

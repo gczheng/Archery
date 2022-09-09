@@ -207,7 +207,7 @@
                 <input type="hidden" name="mode" value="manual">
                 <input type="hidden" name="workflow_id" value="{{ workflow_detail.id }}">
                 <input type="button" id="btnExecuteOnly-manual" class="btn btn-warning"
-                       value="手动执行"/>
+                       value="已手动完成"/>
             </form>
         {% endif %}
     {% endif %}
@@ -609,10 +609,11 @@
                     title: 'SQL内容',
                     field: 'sql',
                     formatter: function (value, row, index) {
-                        if (value.length > 80) {
-                            return value.substr(0, 80) + '...';
+                        var sql=row.sql;
+                        if (sql.length > 80) {
+                            return sql.substr(0, 80) + '...';
                         } else {
-                            return value
+                            return sql
                         }
                     },
                     sortable: false
@@ -620,11 +621,11 @@
                     title: '审核/执行状态',
                     field: 'errlevel',
                     formatter: function (value, row, index) {
-                        if (value === 0) {
+                        if (String(value) === '0') {
                             return 'pass'
-                        } else if (value === 1) {
+                        } else if (String(value) === '1') {
                             return 'warning'
-                        } else if (value === 2) {
+                        } else if (String(value) === '2') {
                             return 'error'
                         }
                     },
@@ -675,9 +676,7 @@
                 },
                 onLoadSuccess: function () {
                 },
-                onLoadError: function () {
-                    alert("数据加载失败！请检查接口返回信息和错误日志！");
-                }
+                onLoadError: onLoadErrorCallback,
             });
         }
 
@@ -733,9 +732,7 @@
                         }],
                         onLoadSuccess: function () {
                         },
-                        onLoadError: function () {
-                            alert("数据加载失败！请检查接口返回信息和错误日志！");
-                        }
+                        onLoadError: onLoadErrorCallback,
                     });
                 },
                 error: function (XMLHttpRequest, textStatus, errorThrown) {
@@ -838,9 +835,7 @@
                     $("#osc-toolbar").show();
                     $('#osc_percent').modal('show');
                 },
-                onLoadError: function () {
-                    alert("数据加载失败！请检查接口返回信息和错误日志！");
-                }
+                onLoadError: onLoadErrorCallback,
             });
 
         }
