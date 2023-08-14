@@ -1,5 +1,5 @@
 # -*- coding: UTF-8 -*-
-""" 
+"""
 @author: hhyo、yyukai
 @license: Apache Licence
 @file: redis.py
@@ -33,6 +33,7 @@ class RedisEngine(EngineBase):
                 encoding_errors="ignore",
                 decode_responses=True,
                 socket_connect_timeout=10,
+                ssl=self.is_ssl,
             )
         else:
             return redis.Redis(
@@ -43,6 +44,7 @@ class RedisEngine(EngineBase):
                 encoding_errors="ignore",
                 decode_responses=True,
                 socket_connect_timeout=10,
+                ssl=self.is_ssl,
             )
 
     @property
@@ -72,7 +74,7 @@ class RedisEngine(EngineBase):
                 for i in conn.info("Keyspace").keys()
                 if len(i.split("db")) == 2
             ]
-            rows = max(dbs, [16])
+            rows = max(dbs + [16])
 
         db_list = [str(x) for x in range(int(rows))]
         result.rows = db_list

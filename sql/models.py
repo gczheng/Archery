@@ -195,6 +195,7 @@ class Instance(models.Model):
     password = fields.EncryptedCharField(
         verbose_name="密码", max_length=300, default="", blank=True
     )
+    is_ssl = models.BooleanField("是否启用SSL", default=False)
     db_name = models.CharField("数据库", max_length=64, default="", blank=True)
     charset = models.CharField("字符集", max_length=20, default="", blank=True)
     service_name = models.CharField(
@@ -245,7 +246,7 @@ class SqlWorkflow(models.Model):
     """
 
     workflow_name = models.CharField("工单内容", max_length=50)
-    demand_url = models.CharField("需求链接", max_length=500)
+    demand_url = models.CharField("需求链接", max_length=500, blank=True)
     group_id = models.IntegerField("组ID")
     group_name = models.CharField("组名称", max_length=100)
     instance = models.ForeignKey(Instance, on_delete=models.CASCADE)
@@ -605,7 +606,8 @@ class InstanceAccount(models.Model):
 
     instance = models.ForeignKey(Instance, on_delete=models.CASCADE)
     user = fields.EncryptedCharField(verbose_name="账号", max_length=128)
-    host = models.CharField(verbose_name="主机", max_length=64)
+    host = models.CharField(verbose_name="主机", max_length=64)  # mysql数据库存储主机信息
+    db_name = models.CharField(verbose_name="数据库名称", max_length=128)  # mongo数据库存储数据库名称
     password = fields.EncryptedCharField(
         verbose_name="密码", max_length=128, default="", blank=True
     )
@@ -615,7 +617,7 @@ class InstanceAccount(models.Model):
     class Meta:
         managed = True
         db_table = "instance_account"
-        unique_together = ("instance", "user", "host")
+        unique_together = ("instance", "user", "host", "db_name")
         verbose_name = "实例账号列表"
         verbose_name_plural = "实例账号列表"
 

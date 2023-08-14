@@ -1,5 +1,4 @@
 # -*- coding: UTF-8 -*-
-import shlex
 
 import MySQLdb
 import os
@@ -11,7 +10,6 @@ from django.contrib.auth.decorators import permission_required
 from django.http import HttpResponse
 from django.views.decorators.cache import cache_page
 
-from common.config import SysConfig
 from common.utils.extend_json_encoder import ExtendJSONEncoder
 from common.utils.convert import Convert
 from sql.engines import get_engine
@@ -165,7 +163,6 @@ def param_edit(request):
     instance_id = request.POST.get("instance_id")
     variable_name = request.POST.get("variable_name")
     variable_value = request.POST.get("runtime_value")
-
     try:
         ins = Instance.objects.get(id=instance_id)
     except Instance.DoesNotExist:
@@ -174,6 +171,8 @@ def param_edit(request):
 
     # 修改参数
     engine = get_engine(instance=ins)
+    variable_name = engine.escape_string(variable_name)
+    variable_value = engine.escape_string(variable_value)
     # 校验是否配置模板
     if not ParamTemplate.objects.filter(variable_name=variable_name).exists():
         result = {"status": 1, "msg": "请先在参数模板中配置该参数！", "data": []}
@@ -225,8 +224,8 @@ def schemasync(request):
         target_db_name = "*"
 
     # 取出该实例的连接方式
-    instance_info = Instance.objects.get(instance_name=instance_name)
-    target_instance_info = Instance.objects.get(instance_name=target_instance_name)
+    instance = Instance.objects.get(instance_name=instance_name)
+    target_instance = Instance.objects.get(instance_name=target_instance_name)
 
     # 提交给SchemaSync获取对比结果
     schema_sync = SchemaSync()
@@ -234,27 +233,13 @@ def schemasync(request):
     tag = int(time.time())
     output_directory = os.path.join(settings.BASE_DIR, "downloads/schemasync/")
     os.makedirs(output_directory, exist_ok=True)
-    db_name = shlex.quote(db_name)
-    target_db_name = shlex.quote(target_db_name)
     args = {
         "sync-auto-inc": sync_auto_inc,
         "sync-comments": sync_comments,
         "tag": tag,
         "output-directory": output_directory,
-        "source": r"mysql://{user}:{pwd}@{host}:{port}/{database}".format(
-            user=shlex.quote(str(instance_info.user)),
-            pwd=shlex.quote(str(instance_info.password)),
-            host=shlex.quote(str(instance_info.host)),
-            port=shlex.quote(str(instance_info.port)),
-            database=db_name,
-        ),
-        "target": r"mysql://{user}:{pwd}@{host}:{port}/{database}".format(
-            user=shlex.quote(str(target_instance_info.user)),
-            pwd=shlex.quote(str(target_instance_info.password)),
-            host=shlex.quote(str(target_instance_info.host)),
-            port=shlex.quote(str(target_instance_info.port)),
-            database=target_db_name,
-        ),
+        "source": f"mysql://{instance.user}:{instance.password}@{instance.host}:{instance.port}/{db_name}",
+        "target": f"mysql://{target_instance.user}:{target_instance.password}@{target_instance.host}:{target_instance.port}/{target_db_name}",
     }
     # 参数检查
     args_check_result = schema_sync.check_args(args)
@@ -263,10 +248,10 @@ def schemasync(request):
             json.dumps(args_check_result), content_type="application/json"
         )
     # 参数转换
-    cmd_args = schema_sync.generate_args2cmd(args, shell=True)
+    cmd_args = schema_sync.generate_args2cmd(args)
     # 执行命令
     try:
-        stdout, stderr = schema_sync.execute_cmd(cmd_args, shell=True).communicate()
+        stdout, stderr = schema_sync.execute_cmd(cmd_args).communicate()
         diff_stdout = f"{stdout}{stderr}"
     except RuntimeError as e:
         diff_stdout = str(e)
@@ -336,12 +321,10 @@ def instance_resource(request):
     result = {"status": 0, "msg": "ok", "data": []}
 
     try:
-        # escape
-        db_name = MySQLdb.escape_string(db_name).decode("utf-8")
-        schema_name = MySQLdb.escape_string(schema_name).decode("utf-8")
-        tb_name = MySQLdb.escape_string(tb_name).decode("utf-8")
-
         query_engine = get_engine(instance=instance)
+        db_name = query_engine.escape_string(db_name)
+        schema_name = query_engine.escape_string(schema_name)
+        tb_name = query_engine.escape_string(tb_name)
         if resource_type == "database":
             resource = query_engine.get_all_databases()
         elif resource_type == "schema" and db_name:
@@ -379,10 +362,14 @@ def describe(request):
     db_name = request.POST.get("db_name")
     schema_name = request.POST.get("schema_name")
     tb_name = request.POST.get("tb_name")
+
     result = {"status": 0, "msg": "ok", "data": []}
 
     try:
         query_engine = get_engine(instance=instance)
+        db_name = query_engine.escape_string(db_name)
+        schema_name = query_engine.escape_string(schema_name)
+        tb_name = query_engine.escape_string(tb_name)
         query_result = query_engine.describe_table(
             db_name, tb_name, schema_name=schema_name
         )
