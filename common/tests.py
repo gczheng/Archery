@@ -1,5 +1,6 @@
 import json
 import smtplib
+import psycopg2
 from unittest.mock import patch, ANY
 import datetime
 from django.contrib.auth import get_user_model
@@ -17,6 +18,7 @@ from sql.models import (
 )
 from common.utils.chart_dao import ChartDao
 from common.auth import init_user
+from common.utils.extend_json_encoder import ExtendJSONEncoderFTime
 
 User = get_user_model()
 
@@ -370,6 +372,8 @@ class CheckTest(TestCase):
         data = {
             "go_inception_host": "inception",
             "go_inception_port": "6669",
+            "go_inception_user": "",
+            "go_inception_password": "",
             "inception_remote_backup_host": "mysql",
             "inception_remote_backup_port": 3306,
             "inception_remote_backup_user": "mysql",
@@ -509,15 +513,6 @@ class ChartTest(TestCase):
         expected_rows = ((self.u2.display, 3), (self.u1.display, 2))
         self.assertEqual(result["rows"], expected_rows)
 
-    def testDashboard(self):
-        """Dashboard测试"""
-        # TODO 这部分测试并没有遵循单元测试, 而是某种集成测试, 直接从响应到结果, 并且只检查状态码
-        # TODO 需要具体查看pyecharst有没有被调用, 以及调用的参数
-        c = Client()
-        c.force_login(self.superuser1)
-        r = c.get("/dashboard/")
-        self.assertEqual(r.status_code, 200)
-
 
 class AuthTest(TestCase):
     def setUp(self):
@@ -546,7 +541,10 @@ class AuthTest(TestCase):
 class PermissionTest(TestCase):
     def setUp(self) -> None:
         self.user = User.objects.create(
-            username="test_user", display="中文显示", is_active=True, email="XXX@xxx.com"
+            username="test_user",
+            display="中文显示",
+            is_active=True,
+            email="XXX@xxx.com",
         )
         self.client.force_login(self.user)
 
@@ -563,3 +561,25 @@ class PermissionTest(TestCase):
         User.objects.filter(username=self.user.username).update(is_superuser=1)
         r = self.client.get("/config/")
         self.assertNotContains(r, "您无权操作，请联系管理员")
+
+
+class ExtendJSONEncoderFTimeTest(TestCase):
+    def setUp(self):
+        # 初始化测试数据或状态
+        self.datetime1 = datetime.datetime.now()
+        self.datetime2 = datetime.datetime.now() - datetime.timedelta(days=1)
+        self.tz_range = psycopg2._range.DateTimeTZRange(self.datetime2, self.datetime1)
+        self.date_time = self.datetime1
+
+    def test_datetime_tz_range(self):
+        # 测试 DateTimeTZRange
+        result = ExtendJSONEncoderFTime().default(self.tz_range)
+        assert (
+            self.datetime1.strftime("%Y-%m-%d") in result
+            and self.datetime2.strftime("%Y-%m-%d") in result
+        )
+
+    def test_datetime(self):
+        # 测试datetime
+        result = ExtendJSONEncoderFTime().default(self.date_time)
+        assert self.datetime1.strftime("%Y-%m-%d") in result

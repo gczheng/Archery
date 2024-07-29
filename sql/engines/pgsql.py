@@ -35,18 +35,15 @@ class PgSQLEngine(EngineBase):
             port=self.port,
             user=self.user,
             password=self.password,
+            client_encoding=self.instance.charset,
             dbname=db_name,
             connect_timeout=10,
         )
         return self.conn
 
-    @property
-    def name(self):
-        return "PgSQL"
+    name = "PgSQL"
 
-    @property
-    def info(self):
-        return "PgSQL engine"
+    info = "PgSQL engine"
 
     def get_all_databases(self):
         """
@@ -167,12 +164,12 @@ class PgSQLEngine(EngineBase):
         except IndexError:
             result["bad_query"] = True
             result["msg"] = "没有有效的SQL语句"
-        if re.match(r"^select", sql, re.I) is None:
+        if re.match(r"^select|^explain", sql, re.I) is None:
             result["bad_query"] = True
             result["msg"] = "不支持的查询语法类型!"
         if "*" in sql:
             result["has_star"] = True
-            result["msg"] = "SQL语句中含有 * "
+            result["msg"] += "SQL语句中含有 * "
         return result
 
     def query(
@@ -211,7 +208,9 @@ class PgSQLEngine(EngineBase):
             result_set.rows = rows
             result_set.affected_rows = effect_row
         except Exception as e:
-            logger.warning(f"PgSQL命令执行报错，语句：{sql}， 错误信息：{traceback.format_exc()}")
+            logger.warning(
+                f"PgSQL命令执行报错，语句：{sql}， 错误信息：{traceback.format_exc()}"
+            )
             result_set.error = str(e)
         finally:
             if close_conn:
