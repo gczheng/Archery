@@ -1,10 +1,11 @@
 # -*- coding: UTF-8 -*-
-""" 
+"""
 @author: hhyo
 @license: Apache Licence
 @file: sqladvisor.py
 @time: 2019/03/04
 """
+
 __author__ = "hhyo"
 
 import re

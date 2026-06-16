@@ -20,7 +20,10 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, ["*"]),
-    SECRET_KEY=(str, "hfusaf2m4ot#7)fkw#di2bu6(cv0@opwmafx5n#6=3d%x^hpl6"),
+    SECRET_KEY=(
+        str,
+        "",
+    ),  # 参考 https://docs.djangoproject.com/zh-hans/4.0/ref/settings/#secret-key
     DATABASE_URL=(str, "mysql://root:@127.0.0.1:3306/archery"),
     CACHE_URL=(str, "redis://127.0.0.1:6379/0"),
     # 系统外部认证目前支持LDAP、OIDC、DINGDING三种，认证方式只能启用其中一种，如果启用多个，实际生效的只有一个，优先级LDAP > DINGDING > OIDC
@@ -34,6 +37,10 @@ env = environ.Env(
     AUTH_LDAP_USER_ATTR_MAP=(
         dict,
         {"username": "cn", "display": "displayname", "email": "mail"},
+    ),
+    OIDC_USER_ATTR_MAP=(
+        dict,
+        {"username": "preferred_username", "display": "name", "email": "email"},
     ),
     Q_CLUISTER_SYNC=(bool, False),  # qcluster 同步模式, debug 时可以调整为 True
     # CSRF_TRUSTED_ORIGINS=subdomain.example.com,subdomain.example2.com subdomain.example.com
@@ -53,6 +60,10 @@ env = environ.Env(
             "odps",
             "cassandra",
             "doris",
+            "elasticsearch",
+            "opensearch",
+            "memcached",
+            "tdengine",
         ],
     ),
     ENABLED_NOTIFIERS=(
@@ -69,6 +80,7 @@ env = environ.Env(
         ],
     ),
     CURRENT_AUDITOR=(str, "sql.utils.workflow_audit:AuditV2"),
+    PASSWORD_MIXIN_PATH=(str, "sql.plugins.password:DummyMixin"),
 )
 
 # SECURITY WARNING: keep the secret key used in production secret!
@@ -101,6 +113,10 @@ AVAILABLE_ENGINES = {
     "phoenix": {"path": "sql.engines.phoenix:PhoenixEngine"},
     "odps": {"path": "sql.engines.odps:ODPSEngine"},
     "doris": {"path": "sql.engines.doris:DorisEngine"},
+    "elasticsearch": {"path": "sql.engines.elasticsearch:ElasticsearchEngine"},
+    "opensearch": {"path": "sql.engines.elasticsearch:OpenSearchEngine"},
+    "memcached": {"path": "sql.engines.memcached:MemcachedEngine"},
+    "tdengine": {"path": "sql.engines.tdengine:TDengineEngine"},
 }
 
 ENABLED_NOTIFIERS = env("ENABLED_NOTIFIERS")
@@ -108,6 +124,8 @@ ENABLED_NOTIFIERS = env("ENABLED_NOTIFIERS")
 ENABLED_ENGINES = env("ENABLED_ENGINES")
 
 CURRENT_AUDITOR = env("CURRENT_AUDITOR")
+
+PASSWORD_MIXIN_PATH = env("PASSWORD_MIXIN_PATH")
 
 # Application definition
 INSTALLED_APPS = (
@@ -263,7 +281,7 @@ REST_FRAMEWORK = {
         "rest_framework.authentication.SessionAuthentication",
     ),
     # 权限
-    "DEFAULT_PERMISSION_CLASSES": ("sql_api.permissions.IsInUserWhitelist",),
+    "DEFAULT_PERMISSION_CLASSES": ("sql_api.permissions.IsApiSystemAdmin",),
     # 限速（anon：未认证用户  user：认证用户）
     "DEFAULT_THROTTLE_CLASSES": (
         "rest_framework.throttling.AnonRateThrottle",
@@ -297,6 +315,7 @@ SIMPLE_JWT = {
 ENABLE_OIDC = env("ENABLE_OIDC", False)
 if ENABLE_OIDC:
     INSTALLED_APPS += ("mozilla_django_oidc",)
+    OIDC_USER_ATTR_MAP = env("OIDC_USER_ATTR_MAP")
     AUTHENTICATION_BACKENDS = (
         "common.authenticate.oidc_auth.OIDCAuthenticationBackend",
         "django.contrib.auth.backends.ModelBackend",

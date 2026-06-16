@@ -24,6 +24,7 @@ from common.utils.const import WorkflowType, WorkflowStatus
 from common.config import SysConfig
 import traceback
 import logging
+from sql.offlinedownload import OffLineDownLoad
 
 logger = logging.getLogger("default")
 
@@ -285,6 +286,113 @@ class InstanceResourceListSerializer(serializers.Serializer):
     result = serializers.ListField()
 
 
+class TableInstanceLookupSerializer(serializers.Serializer):
+    table_name = serializers.CharField(label="表名", max_length=256)
+
+
+class TableInstanceSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    db_type = serializers.CharField()
+    db_name = serializers.CharField()
+    table_name = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+
+
+class LocatorFailureReasonSerializer(serializers.Serializer):
+    instance_name = serializers.CharField()
+    reason = serializers.CharField()
+
+
+class LocatorExecutionSummarySerializer(serializers.Serializer):
+    processed_instance_count = serializers.IntegerField()
+    successful_instance_count = serializers.IntegerField()
+    failed_instance_count = serializers.IntegerField()
+    failure_reasons = LocatorFailureReasonSerializer(many=True)
+
+
+class TableInstanceLookupResponseSerializer(serializers.Serializer):
+    status = serializers.IntegerField()
+    msg = serializers.CharField()
+    count = serializers.IntegerField()
+    data = TableInstanceSerializer(many=True)
+    summary = LocatorExecutionSummarySerializer(required=False, allow_null=True)
+
+
+class SqlQueryInstancesQuerySerializer(serializers.Serializer):
+    type = serializers.CharField(required=False, allow_blank=True)
+    db_type = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=True
+    )
+    tag_codes = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=True
+    )
+
+
+class SqlQueryResourceQuerySerializer(serializers.Serializer):
+    instance_id = serializers.IntegerField(required=False)
+    instance_name = serializers.CharField(required=False, allow_blank=True)
+    resource_type = serializers.ChoiceField(
+        choices=["database", "schema", "table", "column"]
+    )
+    db_name = serializers.CharField(required=False, allow_blank=True)
+    schema_name = serializers.CharField(required=False, allow_blank=True)
+    tb_name = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get("instance_id") and not attrs.get("instance_name"):
+            raise serializers.ValidationError(
+                "instance_id 或 instance_name 必须提供一个"
+            )
+        resource_type = attrs.get("resource_type")
+        if resource_type in ("table", "schema") and not attrs.get("db_name"):
+            raise serializers.ValidationError("db_name 不能为空")
+        if resource_type == "column" and (
+            not attrs.get("db_name") or not attrs.get("tb_name")
+        ):
+            raise serializers.ValidationError("column 查询需提供 db_name 和 tb_name")
+        return attrs
+
+
+class SqlQueryDescribeTableSerializer(serializers.Serializer):
+    instance_name = serializers.CharField()
+    db_name = serializers.CharField()
+    tb_name = serializers.CharField()
+    schema_name = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class SqlQueryExecuteSerializer(serializers.Serializer):
+    instance_name = serializers.CharField()
+    db_name = serializers.CharField()
+    schema_name = serializers.CharField(required=False, allow_blank=True)
+    tb_name = serializers.CharField(required=False, allow_blank=True)
+    sql_content = serializers.CharField()
+    limit_num = serializers.IntegerField(min_value=0)
+
+
+class SqlQueryLogsQuerySerializer(serializers.Serializer):
+    limit = serializers.IntegerField(required=False, default=0, min_value=0)
+    offset = serializers.IntegerField(required=False, default=0, min_value=0)
+    search = serializers.CharField(required=False, allow_blank=True, default="")
+    star = serializers.CharField(required=False, allow_blank=True, default="")
+    query_log_id = serializers.IntegerField(required=False)
+    start_date = serializers.CharField(required=False, allow_blank=True, default="")
+    end_date = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_star(self, value):
+        return str(value).lower() == "true"
+
+
+class SqlQueryFavoriteSerializer(serializers.Serializer):
+    query_log_id = serializers.IntegerField(min_value=1)
+    star = serializers.CharField()
+    alias = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_star(self, value):
+        return str(value).lower() == "true"
+
+
 class ExecuteCheckSerializer(serializers.Serializer):
     instance_id = serializers.IntegerField(label="实例id")
     db_name = serializers.CharField(label="数据库名")
@@ -375,40 +483,42 @@ class WorkflowContentSerializer(serializers.ModelSerializer):
             user = self.context["request"].user
 
         # 验证提交用户的组权限（用户是否在该组、该组是否有指定实例）
+        tag_codes = (
+            ["can_read"] if workflow_data["is_offline_export"] else ["can_write"]
+        )
         try:
-            user_instances(user, tag_codes=["can_write"]).get(id=instance.id)
+            user_instances(user, tag_codes=tag_codes).get(id=instance.id)
         except instance.DoesNotExist:
             raise serializers.ValidationError({"errors": "你所在组未关联该实例！"})
 
         # 再次交给engine进行检测，防止绕过
         try:
             check_engine = get_engine(instance=instance)
-            check_result = check_engine.execute_check(
-                db_name=workflow_data["db_name"], sql=sql_content
-            )
+            sql_export = OffLineDownLoad()
+            if workflow_data["is_offline_export"]:
+                instance.sql_content = sql_content
+                instance.selected_db_name = workflow_data["db_name"]
+                check_result = sql_export.pre_count_check(workflow=instance)
+            else:
+                check_result = check_engine.execute_check(
+                    db_name=workflow_data["db_name"], sql=sql_content
+                )
         except Exception as e:
             raise serializers.ValidationError({"errors": str(e)})
 
         # 未开启备份选项，并且engine支持备份，强制设置备份
         is_backup = (
-            workflow_data["is_backup"] if "is_backup" in workflow_data.keys() else False
+            False
+            if workflow_data["is_offline_export"]
+            else workflow_data.get("is_backup", False)
         )
         sys_config = SysConfig()
         if not sys_config.get("enable_backup_switch") and check_engine.auto_backup:
-            is_backup = True
-
-        # 按照系统配置确定是自动驳回还是放行
-        auto_review_wrong = sys_config.get(
-            "auto_review_wrong", ""
-        )  # 1表示出现警告就驳回，2和空表示出现错误才驳回
-        workflow_status = "workflow_manreviewing"
-        if check_result.warning_count > 0 and auto_review_wrong == "1":
-            workflow_status = "workflow_autoreviewwrong"
-        elif check_result.error_count > 0 and auto_review_wrong in ("", "1", "2"):
-            workflow_status = "workflow_autoreviewwrong"
+            if not workflow_data["is_offline_export"]:
+                is_backup = True
 
         workflow_data.update(
-            status=workflow_status,
+            status="workflow_manreviewing",
             is_backup=is_backup,
             is_manual=0,
             syntax_type=check_result.syntax_type,
@@ -432,7 +542,9 @@ class WorkflowContentSerializer(serializers.ModelSerializer):
             logger.error(f"提交工单报错，错误信息：{traceback.format_exc()}")
             raise serializers.ValidationError({"errors": str(e)})
         # 有时候提交后自动审批通过, 在这里改写一下 workflow 状态
-        if auditor.audit.current_status == WorkflowStatus.PASSED:
+        if auditor.audit.current_status == WorkflowStatus.REJECTED:
+            auditor.workflow.status = "workflow_autoreviewwrong"
+        elif auditor.audit.current_status == WorkflowStatus.PASSED:
             auditor.workflow.status = "workflow_review_pass"
         auditor.workflow.save()
         return workflow_content

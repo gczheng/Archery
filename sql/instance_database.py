@@ -1,10 +1,11 @@
 # -*- coding: UTF-8 -*-
-""" 
+"""
 @author: hhyo
 @license: Apache Licence
 @file: instance_database.py
 @time: 2019/09/19
 """
+
 import MySQLdb
 
 import simplejson as json

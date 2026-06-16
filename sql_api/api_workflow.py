@@ -47,6 +47,7 @@ logger = logging.getLogger("default")
 
 
 class ExecuteCheck(views.APIView):
+
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
@@ -81,11 +82,10 @@ class WorkflowList(generics.ListAPIView):
     列出所有的workflow或者提交一条新的workflow
     """
 
-    permission_classes = [permissions.IsAuthenticated]
-
     filterset_class = WorkflowFilter
     pagination_class = CustomizedPagination
     serializer_class = WorkflowContentSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         """
@@ -120,7 +120,7 @@ class WorkflowList(generics.ListAPIView):
         description="列出所有SQL上线工单（过滤，分页）",
     )
     def get(self, request):
-        workflows = self.filter_queryset(self.queryset)
+        workflows = self.filter_queryset(self.get_queryset())
         page_wf = self.paginate_queryset(queryset=workflows)
         serializer_obj = self.get_serializer(page_wf, many=True)
         data = {"data": serializer_obj.data}
@@ -143,7 +143,11 @@ class WorkflowList(generics.ListAPIView):
             if sys_config.get("notify_phase_control")
             else True
         )
-        if workflow_content.workflow.status == "workflow_manreviewing" and is_notified:
+        if (
+            workflow_content.workflow.status
+            in ["workflow_manreviewing", "workflow_review_pass"]
+            and is_notified
+        ):
             # 获取审核信息
             workflow_audit = Audit.detail_by_workflow_id(
                 workflow_id=workflow_content.workflow.id,

@@ -5,6 +5,7 @@ import traceback
 
 import simplejson as json
 from django.contrib.auth.decorators import permission_required
+from django.contrib.auth.models import Group
 from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.db.models import Q
@@ -30,7 +31,7 @@ from sql.utils.sql_review import (
 )
 from sql.utils.tasks import add_sql_schedule, del_schedule
 from sql.utils.workflow_audit import Audit, get_auditor, AuditException
-from .models import SqlWorkflow
+from .models import SqlWorkflow, WorkflowAudit
 
 logger = logging.getLogger("default")
 
@@ -62,9 +63,13 @@ def _sql_workflow_list(request):
     limit = limit if limit else None
     search = request.POST.get("search")
     user = request.user
+    syntax_type = request.POST.getlist("syntax_type[]")
 
     # 组合筛选项
     filter_dict = dict()
+    # 工单类型
+    if syntax_type:
+        filter_dict["syntax_type__in"] = syntax_type
     # 工单状态
     if nav_status:
         filter_dict["status"] = nav_status
@@ -116,6 +121,7 @@ def _sql_workflow_list(request):
         "db_name",
         "group_name",
         "syntax_type",
+        "export_format",
     )
 
     # QuerySet 序列化

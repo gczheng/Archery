@@ -3,6 +3,7 @@ import smtplib
 import psycopg2
 from unittest.mock import patch, ANY
 import datetime
+from dateutil.relativedelta import relativedelta
 from django.contrib.auth import get_user_model
 from django.test import Client, TestCase
 
@@ -346,7 +347,7 @@ class CheckTest(TestCase):
             password=smtp_pass,
             ssl=False,
         )
-        send_email.called_once_with(
+        send_email.assert_called_once_with(
             "Archery 邮件发送测试", "Archery 邮件发送测试...", [self.superuser1.email]
         )
         self.assertEqual(r_json["status"], 0)
@@ -490,26 +491,42 @@ class ChartTest(TestCase):
         """工单以语法类型分组"""
         dao = ChartDao()
         expected_rows = (("DDL", 2), ("DML", 3))
-        result = dao.syntax_type()
+        today = (datetime.date.today() - relativedelta(days=-1)).strftime("%Y-%m-%d")
+        one_week_before = (datetime.date.today() - relativedelta(days=+6)).strftime(
+            "%Y-%m-%d"
+        )
+        result = dao.syntax_type(one_week_before, today)
         self.assertEqual(result["rows"], expected_rows)
 
     def testWorkflowByDate(self):
         """TODO 按日分组工单数量统计测试"""
         dao = ChartDao()
-        result = dao.workflow_by_date(30)
+        today = (datetime.date.today() - relativedelta(days=-1)).strftime("%Y-%m-%d")
+        one_week_before = (datetime.date.today() - relativedelta(days=+6)).strftime(
+            "%Y-%m-%d"
+        )
+        result = dao.workflow_by_date(one_week_before, today)
         self.assertEqual(len(result["rows"][0]), 2)
 
     def testWorkflowByGroup(self):
         """按组统计测试"""
         dao = ChartDao()
-        result = dao.workflow_by_group(30)
+        today = (datetime.date.today() - relativedelta(days=-1)).strftime("%Y-%m-%d")
+        one_week_before = (datetime.date.today() - relativedelta(days=+6)).strftime(
+            "%Y-%m-%d"
+        )
+        result = dao.workflow_by_group(one_week_before, today)
         expected_rows = (("g2", 3), ("g1", 2))
         self.assertEqual(result["rows"], expected_rows)
 
     def testWorkflowByUser(self):
         """按用户统计测试"""
         dao = ChartDao()
-        result = dao.workflow_by_user(30)
+        today = (datetime.date.today() - relativedelta(days=-1)).strftime("%Y-%m-%d")
+        one_week_before = (datetime.date.today() - relativedelta(days=+6)).strftime(
+            "%Y-%m-%d"
+        )
+        result = dao.workflow_by_user(one_week_before, today)
         expected_rows = ((self.u2.display, 3), (self.u1.display, 2))
         self.assertEqual(result["rows"], expected_rows)
 

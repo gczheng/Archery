@@ -1,13 +1,31 @@
 # -*- coding: UTF-8 -*-
+import importlib
+import logging
 from typing import Optional
 
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from mirage import fields
 from django.utils.translation import gettext as _
+from django.conf import settings
 from mirage.crypto import Crypto
 
 from common.utils.const import WorkflowStatus, WorkflowType, WorkflowAction
+
+logger = logging.getLogger("default")
+file, _class = settings.PASSWORD_MIXIN_PATH.split(":")
+
+try:
+    password_module = importlib.import_module(file)
+    PasswordMixin = getattr(password_module, _class)
+except (ImportError, AttributeError) as e:
+    logger.error(
+        f"failed to import password minxin {settings.PASSWORD_MIXIN_PATH}, {str(e)}"
+    )
+    logger.error(f"falling back to dummy mixin")
+    from sql.plugins.password import DummyMixin
+
+    PasswordMixin = DummyMixin
 
 
 class ResourceGroup(models.Model):
@@ -134,6 +152,10 @@ DB_TYPE_CHOICES = (
     ("goinception", "goInception"),
     ("cassandra", "Cassandra"),
     ("doris", "Doris"),
+    ("elasticsearch", "Elasticsearch"),
+    ("opensearch", "OpenSearch"),
+    ("memcached", "Memcached"),
+    ("tdengine", "TDengine"),
 )
 
 
@@ -177,7 +199,7 @@ class Tunnel(models.Model):
         verbose_name_plural = "隧道配置"
 
 
-class Instance(models.Model):
+class Instance(models.Model, PasswordMixin):
     """
     各个线上实例配置
     """
@@ -203,7 +225,23 @@ class Instance(models.Model):
         verbose_name="密码", max_length=300, default="", blank=True
     )
     is_ssl = models.BooleanField("是否启用SSL", default=False)
+    verify_ssl = models.BooleanField("是否验证服务端SSL证书", default=True)
     db_name = models.CharField("数据库", max_length=64, default="", blank=True)
+    show_db_name_regex = models.CharField(
+        "显示的数据库列表正则",
+        max_length=1024,
+        default="",
+        blank=True,
+        help_text="正则表达式。示例：^(test_db|dmp_db|za.*)$。Redis示例: ^(0|4|6|11|12|13)$",
+    )
+    denied_db_name_regex = models.CharField(
+        "隐藏的数据库列表正则",
+        max_length=1024,
+        default="",
+        blank=True,
+        help_text="正则表达式。隐藏大于显示，此规则优先。",
+    )
+
     charset = models.CharField("字符集", max_length=20, default="", blank=True)
     service_name = models.CharField(
         "Oracle service name", max_length=50, null=True, blank=True
@@ -290,8 +328,8 @@ class SqlWorkflow(models.Model, WorkflowAuditMixin):
     instance = models.ForeignKey(Instance, on_delete=models.CASCADE)
     db_name = models.CharField("数据库", max_length=64)
     syntax_type = models.IntegerField(
-        "工单类型 0、未知，1、DDL，2、DML",
-        choices=((0, "其他"), (1, "DDL"), (2, "DML")),
+        "工单类型 0、未知，1、DDL，2、DML，3、离线导出工单",
+        choices=((0, "其他"), (1, "DDL"), (2, "DML"), (3, "离线导出工单")),
         default=0,
     )
     is_backup = models.BooleanField(
@@ -312,6 +350,37 @@ class SqlWorkflow(models.Model, WorkflowAuditMixin):
     finish_time = models.DateTimeField("结束时间", null=True, blank=True)
     is_manual = models.IntegerField(
         "是否原生执行", choices=((0, "否"), (1, "是")), default=0
+    )
+    is_offline_export = models.IntegerField(
+        "是否为离线导出工单",
+        choices=(
+            (0, "否"),
+            (1, "是"),
+        ),
+        default=0,
+    )
+
+    # 导出格式
+    export_format = models.CharField(
+        "导出格式",
+        max_length=10,
+        choices=(
+            ("csv", "CSV"),
+            ("xlsx", "Excel"),
+            ("sql", "SQL"),
+            ("json", "JSON"),
+            ("xml", "XML"),
+        ),
+        # default="csv",
+        null=True,
+        blank=True,
+    )
+
+    file_name = models.CharField(
+        "文件名",
+        max_length=255,  # 适当调整最大长度
+        null=True,  # 允许为空
+        blank=True,  # 允许为空字符串
     )
 
     def __str__(self):
@@ -536,7 +605,9 @@ class QueryPrivileges(models.Model):
     class Meta:
         managed = True
         db_table = "query_privileges"
-        index_together = ["user_name", "instance", "db_name", "valid_date"]
+        indexes = [
+            models.Index(fields=["user_name", "instance", "db_name", "table_name"]),
+        ]
         verbose_name = "查询权限记录"
         verbose_name_plural = "查询权限记录"
 
@@ -602,6 +673,7 @@ rule_type_choices = (
     (4, "邮箱"),
     (5, "金额"),
     (6, "其他"),
+    (100, "三段式通用脱敏规则"),
 )
 
 
@@ -611,7 +683,11 @@ class DataMaskingColumns(models.Model):
     """
 
     column_id = models.AutoField("字段id", primary_key=True)
-    rule_type = models.IntegerField("规则类型", choices=rule_type_choices)
+    rule_type = models.IntegerField(
+        "规则类型",
+        choices=rule_type_choices,
+        help_text="三段式通用脱敏规则：根据字段长度自动分成三份，中间段脱敏。",
+    )
     active = models.BooleanField(
         "激活状态", choices=((False, "未激活"), (True, "激活"))
     )
@@ -929,6 +1005,7 @@ class Permission(models.Model):
             ("menu_database", "菜单 数据库管理"),
             ("menu_instance_account", "菜单 实例账号管理"),
             ("menu_param", "菜单 参数配置"),
+            ("menu_param_compare", "菜单 参数对比"),
             ("menu_data_dictionary", "菜单 数据字典"),
             ("menu_tools", "菜单 工具插件"),
             ("menu_archive", "菜单 数据归档"),
@@ -965,6 +1042,9 @@ class Permission(models.Model):
             ("archive_mgt", "管理归档申请"),
             ("audit_user", "审计权限"),
             ("query_download", "在线查询下载权限"),
+            ("offline_download", "离线下载权限"),
+            ("menu_sqlexportworkflow", "菜单 数据导出"),
+            ("sqlexport_submit", "提交数据导出"),
         )
 
 
@@ -1235,9 +1315,67 @@ class SlowQueryHistory(models.Model):
         managed = False
         db_table = "mysql_slow_query_review_history"
         unique_together = ("checksum", "ts_min", "ts_max")
-        index_together = ("hostname_max", "ts_min")
+        indexes = [
+            models.Index(fields=["hostname_max", "ts_min"]),
+        ]
         verbose_name = "慢日志明细"
         verbose_name_plural = "慢日志明细"
+
+
+class RedisSlowQuery(models.Model):
+    """
+    Redis慢日志统计
+    """
+
+    checksum = models.CharField(max_length=32, primary_key=True)
+    fingerprint = models.TextField()
+    sample = models.TextField()
+    first_seen = models.DateTimeField(blank=True, null=True)
+    last_seen = models.DateTimeField(blank=True, null=True, db_index=True)
+
+    class Meta:
+        managed = False
+        db_table = "redis_slow_query_review"
+        verbose_name = "Redis慢日志统计"
+        verbose_name_plural = "Redis慢日志统计"
+
+
+class RedisSlowQueryHistory(models.Model):
+    """
+    Redis慢日志明细
+    """
+
+    id = models.AutoField(primary_key=True)
+    checksum = models.ForeignKey(
+        RedisSlowQuery,
+        db_constraint=False,
+        to_field="checksum",
+        db_column="checksum",
+        on_delete=models.CASCADE,
+    )
+    sample = models.TextField()
+    hostname = models.CharField(max_length=64)
+    ts_min = models.DateTimeField(db_index=True)
+    ts_max = models.DateTimeField()
+    cnt = models.IntegerField(default=0)
+    duration_sum = models.BigIntegerField(blank=True, null=True)
+    duration_min = models.BigIntegerField(blank=True, null=True)
+    duration_max = models.BigIntegerField(blank=True, null=True)
+    duration_pct_95 = models.BigIntegerField(blank=True, null=True)
+    duration_stddev = models.DecimalField(
+        max_digits=20, decimal_places=4, blank=True, null=True
+    )
+    duration_median = models.BigIntegerField(blank=True, null=True)
+
+    class Meta:
+        managed = False
+        db_table = "redis_slow_query_review_history"
+        unique_together = ("checksum", "hostname", "ts_min", "ts_max")
+        indexes = [
+            models.Index(fields=["hostname", "ts_min"]),
+        ]
+        verbose_name = "Redis慢日志明细"
+        verbose_name_plural = "Redis慢日志明细"
 
 
 class AuditEntry(models.Model):

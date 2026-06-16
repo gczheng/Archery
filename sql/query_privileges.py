@@ -1,10 +1,11 @@
 # -*- coding: UTF-8 -*-
-""" 
+"""
 @author: hhyo
 @license: Apache Licence
 @file: query_privileges.py
 @time: 2019/03/24
 """
+
 import logging
 import datetime
 import re
@@ -493,7 +494,7 @@ def _db_priv(user, instance, db_name):
     user_privileges = QueryPrivileges.objects.filter(
         user_name=user.username,
         instance=instance,
-        db_name=str(db_name),
+        db_name__in=[str(db_name), str("*")],
         valid_date__gte=datetime.datetime.now(),
         is_deleted=0,
         priv_type=1,

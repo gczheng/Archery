@@ -1,7 +1,9 @@
 """engine base库, 包含一个``EngineBase`` class和一个get_engine函数"""
 
 import importlib
+import re
 from sql.engines.models import ResultSet, ReviewSet
+from sql.models import Instance
 from sql.utils.ssh_tunnel import SSHConnection
 from django.conf import settings
 
@@ -14,19 +16,17 @@ class EngineBase:
     name = "Base"
     info = "base engine"
 
-    def __init__(self, instance=None):
+    def __init__(self, instance: Instance = None):
         self.conn = None
         self.thread_id = None
         if instance:
-            self.instance = instance
+            self.instance = instance  # type: Instance
             self.instance_name = instance.instance_name
             self.host = instance.host
             self.port = int(instance.port)
-            self.user = instance.user
-            self.password = instance.password
+            self.user, self.password = self.instance.get_username_password()
             self.db_name = instance.db_name
             self.mode = instance.mode
-            self.is_ssl = instance.is_ssl
 
             # 判断如果配置了隧道则连接隧道，只测试了MySQL
             if self.instance.tunnel:
@@ -49,6 +49,7 @@ class EngineBase:
             del self.remotessh
 
     def remote_instance_conn(self, instance=None):
+        user, password = instance.get_username_password()
         # 判断如果配置了隧道则连接隧道
         if not hasattr(self, "remotessh") and instance.tunnel:
             self.remotessh = SSHConnection(
@@ -62,13 +63,14 @@ class EngineBase:
                 instance.tunnel.pkey_password,
             )
             self.remote_host, self.remote_port = self.remotessh.get_ssh()
-            self.remote_user = instance.user
-            self.remote_password = instance.password
+            user, password = instance.get_username_password()
+            self.remote_user = user
+            self.remote_password = password
         elif not instance.tunnel:
             self.remote_host = instance.host
             self.remote_port = instance.port
-            self.remote_user = instance.user
-            self.remote_password = instance.password
+            self.remote_user = user
+            self.remote_password = password
         return (
             self.remote_host,
             self.remote_port,
@@ -102,6 +104,10 @@ class EngineBase:
         """返回引擎服务器版本，返回对象为tuple (x,y,z)"""
         return tuple()
 
+    def processlist(self, command_type, **kwargs) -> ResultSet:
+        """获取连接信息"""
+        return ResultSet()
+
     def kill_connection(self, thread_id):
         """终止数据库连接"""
 
@@ -132,6 +138,46 @@ class EngineBase:
     def get_tables_metas_data(self, db_name, **kwargs):
         """获取数据库所有表格信息，用作数据字典导出接口"""
         return list()
+
+    def get_views_list(self, db_name, **kwargs):
+        """获取视图列表, 返回 dict"""
+        return dict()
+
+    def get_view_detail(self, db_name, view_name, **kwargs):
+        """获取视图详情, 返回 dict"""
+        return dict()
+
+    def get_triggers_list(self, db_name, **kwargs):
+        """获取触发器列表, 返回 dict"""
+        return dict()
+
+    def get_trigger_detail(self, db_name, trigger_name, **kwargs):
+        """获取触发器详情, 返回 dict"""
+        return dict()
+
+    def get_procedures_list(self, db_name, **kwargs):
+        """获取存储过程列表, 返回 dict"""
+        return dict()
+
+    def get_procedure_detail(self, db_name, proc_name, **kwargs):
+        """获取存储过程详情, 返回 dict"""
+        return dict()
+
+    def get_functions_list(self, db_name, **kwargs):
+        """获取函数列表, 返回 dict"""
+        return dict()
+
+    def get_function_detail(self, db_name, func_name, **kwargs):
+        """获取函数详情, 返回 dict"""
+        return dict()
+
+    def get_events_list(self, db_name, **kwargs):
+        """获取定时任务列表, 返回 dict"""
+        return dict()
+
+    def get_event_detail(self, db_name, event_name, **kwargs):
+        """获取定时任务详情, 返回 dict"""
+        return dict()
 
     def get_all_databases_summary(self):
         """实例数据库管理功能，获取实例所有的数据库描述信息"""

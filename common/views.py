@@ -1,10 +1,11 @@
 # -*- coding: UTF-8 -*-
-""" 
+"""
 @author: hhyo
 @license: Apache Licence
 @file: views.py
 @time: 2019/12/21
 """
+
 from django.shortcuts import render
 
 __author__ = "hhyo"

@@ -12,7 +12,6 @@ import sqlparse
 import logging
 import re
 
-
 logger = logging.getLogger("default")
 
 
@@ -26,38 +25,53 @@ class DorisEngine(MysqlEngine):
     def server_version(self):
         sql = "show frontends"
         result = self.query(sql=sql)
-        version = result.rows[0][-1].split("-")[0]
-        return tuple([int(n) for n in version.split(".")[:3]])
 
-    def query(self, db_name=None, sql="", limit_num=0, close_conn=True, **kwargs):
-        """返回 ResultSet"""
-        result_set = ResultSet(full_sql=sql)
-        try:
-            conn = self.get_connection(db_name=db_name)
-            cursor = conn.cursor()
-            cursor.execute(sql)
-            if int(limit_num) > 0:
-                rows = cursor.fetchmany(size=int(limit_num))
-            else:
-                rows = cursor.fetchall()
-            fields = cursor.description
+        # Find Version column by name (robust against column reordering/additions)
+        if not result.rows:
+            raise ValueError("No frontend information returned from 'show frontends'")
 
-            result_set.column_list = [i[0] for i in fields] if fields else []
-            result_set.rows = rows
-            result_set.affected_rows = len(rows)
-        except Exception as e:
-            logger.warning(f"Doris语句执行报错，语句：{sql}，错误信息{e}")
-            result_set.error = str(e).split("Stack trace")[0]
-        finally:
-            if close_conn:
-                self.close()
-        return result_set
+        version_col_index = None
+        if result.column_list:
+            # Search for 'Version' column by name
+            for idx, col_name in enumerate(result.column_list):
+                if col_name.lower() == "version":
+                    version_col_index = idx
+                    break
+
+        # Fallback: if no column_list or Version column not found, use -2 (second-to-last)
+        if version_col_index is None:
+            version_col_index = -2
+
+        # Extract version string: "doris-2.1.11-rc01-97b77e6cda"
+        version_string = result.rows[0][version_col_index]
+
+        # Parse version: "doris-2.1.11-..." -> "2.1.11"
+        parts = version_string.split("-")
+        if len(parts) < 2:
+            raise ValueError(f"Unexpected version format: '{version_string}'")
+
+        version_numbers = parts[1]  # Get "2.1.11" from "doris-2.1.11-..."
+        return tuple([int(n) for n in version_numbers.split(".")[:3]])
 
     forbidden_databases = [
         "__internal_schema",
         "INFORMATION_SCHEMA",
         "information_schema",
     ]
+
+    def processlist(
+        self,
+        command_type,
+        base_sql="select id, user, host, catalog, db, command, time, state, query_id, ifnull(info,'') as info, fe from information_schema.processlist",
+        **kwargs,
+    ):
+        return super(DorisEngine, self).processlist(command_type, base_sql)
+
+    def get_kill_command(self, thread_ids, thread_ids_check=False):
+        return super(DorisEngine, self).get_kill_command(thread_ids, thread_ids_check)
+
+    def kill(self, thread_ids, thread_ids_check=False):
+        return super(DorisEngine, self).kill(thread_ids, thread_ids_check)
 
     def execute_check(self, db_name=None, sql=""):
         """上线单执行前的检查, 返回Review set"""
@@ -186,3 +200,14 @@ class DorisEngine(MysqlEngine):
         if close_conn:
             self.close()
         return execute_result
+
+    def get_long_transaction(self, *args, **kwargs):
+        # 不支持的方法需要抛出错误
+        raise AttributeError(
+            f"{self.__class__.__name__} has no attribute 'get_long_transaction'"
+        )
+
+    def trxandlocks(self, *args, **kwargs):
+        raise AttributeError(
+            f"{self.__class__.__name__} has no attribute 'trxandlocks'"
+        )

@@ -1,6 +1,9 @@
-from rest_framework import views, generics, status, serializers
+import logging
+
+from rest_framework import views, generics, status, serializers, permissions
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
+from sql.utils.sql_utils import filter_db_list
 from .serializers import (
     InstanceSerializer,
     InstanceDetailSerializer,
@@ -8,13 +11,19 @@ from .serializers import (
     AliyunRdsSerializer,
     InstanceResourceSerializer,
     InstanceResourceListSerializer,
+    TableInstanceLookupSerializer,
+    TableInstanceLookupResponseSerializer,
 )
 from .pagination import CustomizedPagination
 from .filters import InstanceFilter
 from sql.models import Instance, Tunnel, AliyunRdsConfig
 from sql.engines import get_engine
+from sql.utils.resource_group import user_instances
+from .table_instance_locator import resolve_table_instances
 from django.http import Http404
 import MySQLdb
+
+logger = logging.getLogger(__name__)
 
 
 class InstanceList(generics.ListAPIView):
@@ -193,6 +202,16 @@ class InstanceResource(views.APIView):
             tb_name = query_engine.escape_string(tb_name)
             if resource_type == "database":
                 resource = query_engine.get_all_databases()
+                resource.rows = filter_db_list(
+                    db_list=resource.rows,
+                    db_name_regex=query_engine.instance.show_db_name_regex,
+                    is_match_regex=True,
+                )
+                resource.rows = filter_db_list(
+                    db_list=resource.rows,
+                    db_name_regex=query_engine.instance.denied_db_name_regex,
+                    is_match_regex=False,
+                )
             elif resource_type == "schema" and db_name:
                 resource = query_engine.get_all_schemas(db_name=db_name)
             elif resource_type == "table" and db_name:
@@ -216,3 +235,53 @@ class InstanceResource(views.APIView):
                 resource = {"count": len(resource.rows), "result": resource.rows}
                 serializer_obj = InstanceResourceListSerializer(resource)
                 return Response(serializer_obj.data)
+
+
+class TableInstanceLookup(views.APIView):
+    """按表名查询所属实例列表。"""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="按表名查询所属实例",
+        request=TableInstanceLookupSerializer,
+        responses={200: TableInstanceLookupResponseSerializer},
+        description="输入table名，返回包含该表的实例列表（固定返回status/msg/count/data）。",
+    )
+    def post(self, request):
+        serializer = TableInstanceLookupSerializer(data=request.data)
+        if not serializer.is_valid():
+            errors = serializer.errors
+            msg = "参数校验失败"
+            if "table_name" in errors:
+                msg = f"参数table_name错误: {errors['table_name'][0]}"
+            return Response({"status": 1, "msg": msg, "count": 0, "data": []})
+
+        table_name = serializer.validated_data["table_name"]
+        instances = user_instances(request.user)
+
+        try:
+            data = resolve_table_instances(
+                table_name=table_name,
+                instances=instances,
+                request=request,
+            )
+        except Exception as e:
+            logger.exception(f"查询表所属实例失败: {e}")
+            return Response(
+                {
+                    "status": 1,
+                    "msg": "查询失败: 未知错误, 请联系管理员",
+                    "count": 0,
+                    "data": [],
+                }
+            )
+
+        return Response(
+            {
+                "status": 0,
+                "msg": "查询成功",
+                "count": len(data),
+                "data": data,
+            }
+        )
